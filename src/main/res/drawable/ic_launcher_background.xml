@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Same gradient as the buttons (Brand in Theme.kt). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <gradient android:angle="0" android:startColor="#E82E54" android:endColor="#D61C66" />
+</shape>

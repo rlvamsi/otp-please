@@ -1,0 +1,12 @@
+.gradle/
+.kotlin/
+build/
+local.properties
+*.keystore
+*.jks
+.idea/
+*.iml
+.DS_Store
+keystore.properties
+# Working notes for coding agents: local paths and personal details, not for the public repo.
+Agent_rules.md
