@@ -1,13 +1,16 @@
 package co.atomiclabs.otpair
 
 import android.app.KeyguardManager
+import android.content.ClipboardManager
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -41,14 +44,29 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.google.android.gms.auth.api.phone.SmsRetriever
 import kotlinx.coroutines.delay
 
 /**
- * The full-screen "Send this code?" page. It comes up over the lock screen, like an incoming
- * call, when the partner asks and a code is here. Send needs the phone unlocked.
+ * The full-screen request. It comes up over the lock screen, like an incoming call, when the
+ * partner asks. Answering needs the phone unlocked. Then the code comes from Android's
+ * "Allow OTP Please to read this message?" pop-up for the next text, or the owner copies it
+ * from a text that already came and taps Paste code.
  */
 class ApprovalActivity : ComponentActivity() {
     private var request by mutableStateOf<Bundle?>(null)
+    private var answered by mutableStateOf(false)
+    private var note by mutableStateOf<String?>(null)
+
+    private val consent = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val text = result.data?.getStringExtra(SmsRetriever.EXTRA_SMS_MESSAGE).orEmpty()
+        val code = Otp.find(text)
+        if (result.resultCode == RESULT_OK && code != null) {
+            send(code, text)
+        } else {
+            Consent.listen(this) // not allowed, or no code in it: keep waiting for the next text
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -61,11 +79,22 @@ class ApprovalActivity : ComponentActivity() {
             @Suppress("DEPRECATION")
             window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
         }
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) // while waiting for the text
         request = intent.extras
         setContent {
             OtpairTheme {
                 Surface(Modifier.fillMaxSize(), color = look.bg) {
-                    request?.let { Approval(it, ::answer, ::finish) }
+                    request?.let { Approval(it, answered, note, ::accept, ::paste, { answer(null) }, ::finish) }
+                }
+            }
+            // A text that came in while ringing is offered as soon as the owner has answered.
+            val pending = Consent.pending
+            LaunchedEffect(answered, pending) {
+                if (answered && pending != null) {
+                    unlocked {
+                        Consent.pending = null
+                        consent.launch(pending)
+                    }
                 }
             }
         }
@@ -76,40 +105,61 @@ class ApprovalActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         request = intent.extras
+        if (answered) request?.let { Alerts.ask(this, it, ring = false) }
     }
 
-    private fun answer(send: Boolean) {
-        val now = request ?: return finish()
+    /** Someone holding the locked phone can't send a code: Android asks for the fingerprint or PIN first. */
+    private fun unlocked(then: () -> Unit) {
         val keyguard = getSystemService(KeyguardManager::class.java)
-        if (!send || !keyguard.isKeyguardLocked) {
-            Decision.decide(this, now, send)
-            finish()
-            return
-        }
-        // Someone holding the locked phone can't send a code: Android asks for the fingerprint or PIN first.
+        if (!keyguard.isKeyguardLocked) return then()
         keyguard.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
-            override fun onDismissSucceeded() {
-                Decision.decide(this@ApprovalActivity, now, true)
-                finish()
-            }
+            override fun onDismissSucceeded() = then()
         })
+    }
+
+    private fun accept() = unlocked {
+        answered = true
+        request?.let { Alerts.ask(this, it, ring = false) } // stops the ringing
+    }
+
+    private fun paste() = unlocked {
+        val text = getSystemService(ClipboardManager::class.java).primaryClip
+            ?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
+        val code = Otp.find(text)
+        if (code == null) {
+            note = "There’s no code on the clipboard. Copy it from the text first."
+            return@unlocked
+        }
+        send(code, text.trim().takeIf { it != code }.orEmpty())
+    }
+
+    private fun send(code: String, body: String) {
+        Toast.makeText(this, "Code sent", Toast.LENGTH_SHORT).show()
+        answer(code, body)
+    }
+
+    private fun answer(code: String?, body: String = "") {
+        request?.let { Decision.answer(this, it, code, body) }
+        finish()
     }
 }
 
 @Composable
-private fun Approval(request: Bundle, onAnswer: (Boolean) -> Unit, onGone: () -> Unit) {
+private fun Approval(
+    request: Bundle, answered: Boolean, note: String?,
+    onAccept: () -> Unit, onPaste: () -> Unit, onDeny: () -> Unit, onGone: () -> Unit,
+) {
     val context = LocalContext.current
     val until = request.getLong("until")
     var left by remember(request) { mutableLongStateOf(until - System.currentTimeMillis()) }
-    // Closes by itself once the time is up or the notification was answered from the shade.
+    // Closes by itself once the time is up or the request was turned down from the notification.
     LaunchedEffect(request) {
         while (true) {
             left = until - System.currentTimeMillis()
-            if (left <= 0 || !Alerts.active(context, request.getInt("id"))) return@LaunchedEffect onGone()
+            if (left <= 0 || !Alerts.active(context)) return@LaunchedEffect onGone()
             delay(500)
         }
     }
-    val sender = request.getString("sender").orEmpty().ifBlank { "Text message" }
 
     Column(
         Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 24.dp),
@@ -120,30 +170,41 @@ private fun Approval(request: Bundle, onAnswer: (Boolean) -> Unit, onGone: () ->
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Spacer(Modifier.height(56.dp))
-            Ringing()
+            if (answered) Box(Modifier.size(140.dp), Alignment.Center) { Logo(80.dp) } else Ringing()
             Spacer(Modifier.height(32.dp))
             T("YOUR PARTNER IS ASKING", Type.eyebrow, color = look.soft)
             Spacer(Modifier.height(10.dp))
-            T("Send this code?", Type.display, align = TextAlign.Center)
-            Spacer(Modifier.height(28.dp))
-            Column(Modifier.fillMaxWidth().background(look.surface, RoundedCornerShape(24.dp)).padding(20.dp)) {
-                T(sender.uppercase(), Type.eyebrow, color = look.soft, maxLines = 1)
-                Spacer(Modifier.height(8.dp))
-                T(request.getString("body").orEmpty(), Type.body)
-            }
+            T(if (answered) "Waiting for the code" else "Send them a code?", Type.display, align = TextAlign.Center)
             Spacer(Modifier.height(16.dp))
-            T(
-                "Check the amount and the shop. Only send it if your partner is paying right now.",
-                Type.small, color = look.soft, align = TextAlign.Center,
-            )
+            if (!answered) {
+                T("Only if they’re paying or signing in right now.", Type.body, color = look.soft, align = TextAlign.Center)
+            } else {
+                Column(Modifier.fillMaxWidth().background(look.surface, RoundedCornerShape(24.dp)).padding(20.dp)) {
+                    T("When the text arrives", Type.bodyStrong)
+                    Spacer(Modifier.height(4.dp))
+                    T("Android shows it and asks to let OTP Please read it. Check the amount and the shop, then tap Allow.", Type.small, color = look.soft)
+                    Spacer(Modifier.height(16.dp))
+                    T("Already got it?", Type.bodyStrong)
+                    Spacer(Modifier.height(4.dp))
+                    T("Copy the code from the text, then tap Paste code.", Type.small, color = look.soft)
+                }
+            }
+            if (note != null) {
+                Spacer(Modifier.height(16.dp))
+                T(note, Type.small, color = look.ink, align = TextAlign.Center)
+            }
             Spacer(Modifier.height(16.dp))
         }
         val seconds = (left.coerceAtLeast(0) + 999) / 1000
-        T("%d:%02d left to decide".format(seconds / 60, seconds % 60), Type.small, color = look.soft)
+        T("%d:%02d left".format(seconds / 60, seconds % 60), Type.small, color = look.soft)
         Spacer(Modifier.height(16.dp))
-        PrimaryButton("Send code", Modifier.fillMaxWidth(), icon = Glyph.Check) { onAnswer(true) }
+        if (answered) {
+            PrimaryButton("Paste code", Modifier.fillMaxWidth(), icon = Glyph.Copy, onClick = onPaste)
+        } else {
+            PrimaryButton("Send a code", Modifier.fillMaxWidth(), icon = Glyph.Check, onClick = onAccept)
+        }
         Spacer(Modifier.height(12.dp))
-        OutlineButton("Don’t send", Modifier.fillMaxWidth()) { onAnswer(false) }
+        OutlineButton("Don’t send", Modifier.fillMaxWidth(), onClick = onDeny)
         Spacer(Modifier.height(16.dp))
     }
 }

@@ -35,6 +35,16 @@ class CoreTest {
     }
 
     @Test
+    fun `finds a copied code, and the code in an allowed text`() {
+        assertEquals("482913", Otp.find("482913"))
+        assertEquals("482913", Otp.find(" 482913\n"))
+        assertEquals("482913", Otp.find("OTP is 482913 for txn of INR 1,499.00 at AMAZON"))
+        assertEquals("5521", Otp.find("Swiggy: 5521 to log in"))
+        assertNull(Otp.find("hello"))
+        assertNull(Otp.find("1,499.00"))
+    }
+
+    @Test
     fun `two phones that pair can read each other, and nobody else can`() {
         val shower = Pairing.new()
         val scanner = Pairing.new()

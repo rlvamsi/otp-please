@@ -4,21 +4,24 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.app.job.JobInfo
-import android.app.job.JobParameters
-import android.app.job.JobScheduler
-import android.app.job.JobService
 import android.content.BroadcastReceiver
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
-import android.os.PersistableBundle
-import android.provider.Telephony
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Log
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.core.os.BundleCompat
+import com.google.android.gms.auth.api.phone.SmsRetriever
+import com.google.android.gms.common.api.CommonStatusCodes
+import com.google.android.gms.common.api.Status
+import com.google.firebase.messaging.FirebaseMessaging
+import com.google.firebase.messaging.FirebaseMessagingService
+import com.google.firebase.messaging.RemoteMessage
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
@@ -30,43 +33,54 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import kotlin.concurrent.thread
-import kotlin.coroutines.cancellation.CancellationException
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 
-/** How long a code is held for the partner, and how long the partner waits for one. */
+/** How long Get OTP waits for the other phone to start ringing. */
 internal const val WINDOW_SECONDS = 60
 
-/** How long the owner has to tap Send once asked. Bank codes usually stay valid longer than this. */
-internal const val APPROVE_SECONDS = 180
+/** How long the owner has to send a code once asked: as long as Android's consent pop-up listens for a text. */
+internal const val APPROVE_SECONDS = 300
 
 /** The only network hop: sealed messages go through a public ntfy server, which never sees a key. */
 object Relay {
     // Any ntfy server works. To use your own, change this one line.
     private const val BASE = "https://ntfy.sh"
 
+    // The small worker in worker/ that hands a sealed request to Firebase, which wakes the sharing
+    // phone. Put its address here once it is deployed (docs/PLAY.md). Empty: nothing rings.
+    private const val WAKE = ""
+
     /** Blocking. Throws IOException when the relay can't be reached. */
-    fun publish(link: Link, msg: Msg) {
-        val conn = URL("$BASE/${link.topic}").openConnection() as HttpURLConnection
+    fun publish(link: Link, msg: Msg) =
+        post("$BASE/${link.topic}", link.seal(msg.pack()), "Firebase" to "no") // ntfy: don't fan out through Google's push service
+
+    /**
+     * Rings the other phone through Firebase. Only the sealed message and the pair's Firebase
+     * topic leave this phone. Blocking; throws IOException when the worker can't be reached.
+     */
+    fun wake(link: Link, msg: Msg) {
+        if (WAKE.isEmpty()) {
+            Log.w("OtpPlease", "Relay.WAKE is empty, so the other phone can't be woken")
+            return
+        }
+        post(WAKE, JSONObject().put("to", link.push).put("m", link.seal(msg.pack())).toString(), "Content-Type" to "application/json")
+    }
+
+    private fun post(url: String, body: String, header: Pair<String, String>) {
+        val conn = URL(url).openConnection() as HttpURLConnection
         try {
             conn.connectTimeout = 4000
-            conn.readTimeout = 4000
+            conn.readTimeout = 8000
             conn.requestMethod = "POST"
             conn.doOutput = true
-            conn.setRequestProperty("Firebase", "no") // don't fan out through Google's push service
-            conn.outputStream.use { it.write(link.seal(msg.pack()).toByteArray()) }
-            if (conn.responseCode !in 200..299) throw IOException("relay answered ${conn.responseCode}")
+            conn.setRequestProperty(header.first, header.second)
+            conn.outputStream.use { it.write(body.toByteArray()) }
+            if (conn.responseCode !in 200..299) throw IOException("answered ${conn.responseCode}")
         } finally {
             conn.disconnect()
         }
@@ -169,22 +183,22 @@ private object Vault {
 }
 
 /**
- * Nothing is sent without the owner's say-so. When the partner asks and a code is here, this
- * phone rings like an incoming call until the owner taps Send or Don't send. Sharing does not
- * work while these notifications are blocked.
+ * Nothing is sent without the owner's say-so. When the partner asks, this phone rings like an
+ * incoming call until the owner answers. Sharing does not work while these notifications are blocked.
  */
 object Alerts {
     private const val CHANNEL = "ask"
+    private const val ID = 1 // one request at a time: a new one replaces the last
 
     private fun manager(context: Context) = context.getSystemService(NotificationManager::class.java)
 
     /** Called when sharing is switched on, so the channel shows up in the phone's settings. */
     fun prepare(context: Context) {
         val channel = NotificationChannel(CHANNEL, "Your partner asks for a code", NotificationManager.IMPORTANCE_HIGH).apply {
-            description = "Rings until you choose to send the code or not."
+            description = "Rings until you choose to send a code or not."
             enableVibration(true)
             vibrationPattern = longArrayOf(0, 600, 400, 600, 400, 600)
-            lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC // says only that a code is wanted
         }
         manager(context).createNotificationChannel(channel)
         manager(context).deleteNotificationChannel("sent") // from the version that sent codes without asking
@@ -199,74 +213,49 @@ object Alerts {
     /** Whether the request can take over the screen like a call. Without it, it is a ringing notification. */
     fun fullScreen(context: Context) = Build.VERSION.SDK_INT < 34 || manager(context).canUseFullScreenIntent()
 
-    /** [request] holds the code and everything needed to send it: see [ShareJob]. */
-    fun ask(context: Context, request: Bundle) {
+    /** [request] says which pair asked and until when: see [Wake]. [ring] is false once the owner has answered. */
+    fun ask(context: Context, request: Bundle, ring: Boolean = true) {
         prepare(context)
-        val id = request.getInt("id")
-        val from = request.getString("sender").orEmpty().ifBlank { "a text message" }
-        val screen = PendingIntent.getActivity(
-            context, id, Intent(context, ApprovalActivity::class.java).putExtras(request),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        fun decide(send: Boolean) = PendingIntent.getBroadcast(
-            context, id * 2 + if (send) 1 else 0,
-            Intent(context, Decision::class.java).setAction(if (send) Decision.SEND else Decision.DENY).putExtras(request),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        val title = "Your partner is asking for a code"
-        val public = Notification.Builder(context, CHANNEL)
-            .setSmallIcon(R.drawable.ic_notify)
-            .setColor(0xFFE82E54.toInt())
-            .setContentTitle(title)
-            .setContentText("Unlock to choose whether to send it.")
-            .build()
+        val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        val screen = PendingIntent.getActivity(context, ID, Intent(context, ApprovalActivity::class.java).putExtras(request), flags)
+        val deny = PendingIntent.getBroadcast(context, ID, Intent(context, Decision::class.java).putExtras(request), flags)
         val notification = Notification.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_notify)
             .setColor(0xFFE82E54.toInt())
-            .setContentTitle(title)
-            .setContentText("From $from. Send it?")
-            .setStyle(Notification.BigTextStyle().bigText("From $from:\n${request.getString("body").orEmpty()}"))
+            .setContentTitle("Your partner is asking for a code")
+            .setContentText(if (ring) "Tap to send one." else "Waiting for the code.")
             .setCategory(Notification.CATEGORY_CALL)
-            .setVisibility(Notification.VISIBILITY_PRIVATE)
-            .setPublicVersion(public)
             .setContentIntent(screen)
-            .setFullScreenIntent(screen, true)
+            .apply { if (ring) setFullScreenIntent(screen, true) }
+            .setOnlyAlertOnce(!ring)
             .setOngoing(true)
             .setTimeoutAfter((request.getLong("until") - System.currentTimeMillis()).coerceAtLeast(1000))
-            .addAction(
-                Notification.Action.Builder(null, "Send", decide(true))
-                    .apply { if (Build.VERSION.SDK_INT >= 31) setAuthenticationRequired(true) }
-                    .build(),
-            )
-            .addAction(Notification.Action.Builder(null, "Don’t send", decide(false)).build())
+            .addAction(Notification.Action.Builder(null, "Don’t send", deny).build())
             .build()
-        notification.flags = notification.flags or Notification.FLAG_INSISTENT // keeps ringing, like a call
-        manager(context).notify(id, notification)
+        if (ring) notification.flags = notification.flags or Notification.FLAG_INSISTENT // keeps ringing, like a call
+        manager(context).notify(ID, notification)
     }
 
-    fun active(context: Context, id: Int) = manager(context).activeNotifications.any { it.id == id }
+    fun active(context: Context) = manager(context).activeNotifications.any { it.id == ID }
 
-    fun dismiss(context: Context, id: Int) = manager(context).cancel(id)
+    fun dismiss(context: Context) = manager(context).cancel(ID)
 }
 
 /**
- * Send and Don't send, from the notification or from [ApprovalActivity]. Only this app can
- * trigger it. The code travels in the request itself, so it works even if the app was closed
- * in between.
+ * Don't send, from the notification; and both answers from [ApprovalActivity]. Only this app can
+ * trigger it.
  */
 class Decision : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val done = goAsync()
-        decide(context, intent.extras ?: Bundle(), intent.action == SEND) { done.finish() }
+        answer(context, intent.extras ?: Bundle(), null) { done.finish() }
     }
 
     companion object {
-        const val SEND = "co.atomiclabs.otpair.SEND"
-        const val DENY = "co.atomiclabs.otpair.DENY"
-
-        fun decide(context: Context, request: Bundle, send: Boolean, then: () -> Unit = {}) {
+        /** Sends [code] (and the text it came in, [body], if there is one), or "no" when [code] is null. */
+        fun answer(context: Context, request: Bundle, code: String?, body: String = "", then: () -> Unit = {}) {
             val app = context.applicationContext
-            Alerts.dismiss(app, request.getInt("id"))
+            Alerts.dismiss(app)
             thread {
                 try {
                     val store = Store(app)
@@ -275,17 +264,13 @@ class Decision : BroadcastReceiver() {
                     val current = link != null && link.topic == request.getString("topic") && store.sharing &&
                         System.currentTimeMillis() < request.getLong("until")
                     if (current && link != null) {
-                        val msg = if (send) {
-                            Msg("otp", store.deviceId, request.getString("code").orEmpty(), request.getString("sender").orEmpty(), request.getString("body").orEmpty())
-                        } else {
-                            Msg("no", store.deviceId)
-                        }
+                        val msg = if (code != null) Msg("otp", store.deviceId, code, "", body) else Msg("no", store.deviceId)
                         try {
                             Relay.publish(link, msg)
                         } catch (e: IOException) {
                             Relay.publish(link, msg)
                         }
-                        if (send) store.lastShared = msg.at to msg.sender
+                        if (code != null) store.lastShared = msg.at to ""
                     }
                 } catch (e: Exception) {
                     Log.w("OtpPlease", "answering the request failed: ${e.javaClass.simpleName}")
@@ -297,115 +282,71 @@ class Decision : BroadcastReceiver() {
     }
 }
 
-/**
- * Android starts this for every incoming text message, even when the app isn't running.
- * An OTP is not sent anywhere from here: it is handed to [ShareJob], which gives it to the
- * partner only if the partner asks.
- */
-class SmsReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
-        val store = Store(context)
-        if (!store.sharing || !Alerts.allowed(context) || store.link == null) return
+/** Firebase wakes this phone with the partner's sealed request. Google can't read it. */
+class PushService : FirebaseMessagingService() {
+    override fun onMessageReceived(message: RemoteMessage) {
+        message.data["m"]?.let { Wake.ring(this, it) }
+    }
+}
 
-        val parts = Telephony.Sms.Intents.getMessagesFromIntent(intent) ?: return
-        val body = parts.joinToString("") { it.messageBody.orEmpty() }
-        val code = Otp.extract(body) ?: return // not an OTP: nothing more happens
-        ShareJob.hold(context, code, parts.firstOrNull()?.displayOriginatingAddress.orEmpty(), body)
+object Wake {
+    /**
+     * While this phone shares, it follows its pair's Firebase topic. Does nothing when the app
+     * was built without Firebase (no google-services.json).
+     */
+    // ponytail: never unfollows. After unpairing or switching sharing off, a wake is simply ignored by [ring].
+    fun follow(store: Store) {
+        val link = store.link ?: return
+        if (!store.sharing) return
+        try {
+            FirebaseMessaging.getInstance().subscribeToTopic(link.push)
+        } catch (e: IllegalStateException) {
+            Log.w("OtpPlease", "Firebase isn't set up in this build, so this phone can't be woken")
+        }
+    }
+
+    /** Rings only for a fresh "want" sealed with this pair's key, and only while sharing is on. Blocking. */
+    fun ring(context: Context, sealed: String) {
+        val store = Store(context)
+        val link = store.link ?: return
+        val msg = link.open(sealed)?.let(Msg::unpack) ?: return
+        if (msg.type != "want" || !msg.fresh() || msg.from == store.deviceId || !store.sharing || !Alerts.allowed(context)) return
+
+        Consent.listen(context) // a text arriving from now on can be offered while the phone rings
+        Alerts.ask(context, Bundle().apply {
+            putString("topic", link.topic)
+            putLong("until", System.currentTimeMillis() + APPROVE_SECONDS * 1000L)
+        })
+        // Lets the partner's screen say this phone is ringing.
+        try {
+            Relay.publish(link, Msg("asking", store.deviceId))
+        } catch (e: IOException) {
+            Log.w("OtpPlease", "telling the partner failed: ${e.javaClass.simpleName}")
+        }
     }
 }
 
 /**
- * Keeps one code on this phone for a minute. If the partner asked for a code in the minute
- * before it arrived, or asks in the minute after, this phone rings and the owner decides
- * whether to send it ([Alerts.ask]). Otherwise the code is forgotten and never leaves the phone.
+ * Android's one-message pop-up: "Allow OTP Please to read this message?". For five minutes after
+ * [listen], the next text that contains a code (from a sender not in contacts) is offered, and the
+ * owner sees the whole message before allowing it. The app never has the SMS permission.
  */
-class ShareJob : JobService() {
-    private val scope = CoroutineScope(Dispatchers.IO)
-    private val holding = mutableMapOf<Int, Job>()
+object Consent {
+    /** The pop-up, waiting until [ApprovalActivity] is in front to show it. */
+    var pending by mutableStateOf<Intent?>(null)
 
-    override fun onStartJob(params: JobParameters): Boolean {
-        val store = Store(this)
-        val link = store.link ?: return false
-        val extras = params.extras
-        val until = extras.getLong("until")
-
-        holding[params.jobId] = scope.launch {
-            try {
-                while (true) {
-                    val left = until - System.currentTimeMillis()
-                    if (left <= 0) break
-                    try {
-                        // "60s" also finds a request made just before the text message arrived.
-                        val asked = withTimeoutOrNull(left) {
-                            Relay.listen(link, "${WINDOW_SECONDS}s").first { it.type == "want" && it.from != store.deviceId }
-                        }
-                        // Sharing may have been switched off, or the phone unpaired, during the wait.
-                        val still = Store(this@ShareJob)
-                        if (asked != null && still.sharing && still.link?.topic == link.topic && Alerts.allowed(this@ShareJob)) {
-                            val request = Bundle().apply {
-                                putInt("id", params.jobId)
-                                putString("topic", link.topic)
-                                putString("code", extras.getString("code"))
-                                putString("sender", extras.getString("sender"))
-                                putString("body", extras.getString("body"))
-                                putLong("until", System.currentTimeMillis() + APPROVE_SECONDS * 1000L)
-                            }
-                            Alerts.ask(this@ShareJob, request)
-                            // Lets the partner's screen say the code is here and waiting for a yes.
-                            try {
-                                Relay.publish(link, Msg("asking", store.deviceId))
-                            } catch (e: IOException) {
-                                Log.w("OtpPlease", "telling the partner failed: ${e.javaClass.simpleName}")
-                            }
-                        }
-                        break
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        // Only the kind of error: its text can carry the relay address of this pair.
-                        Log.w("OtpPlease", "waiting for the partner to ask: ${e.javaClass.simpleName}")
-                        delay(1500) // offline or the stream dropped: keep waiting out the minute
-                    }
-                }
-            } finally {
-                holding.remove(params.jobId)
-                jobFinished(params, false)
-            }
-        }
-        return true
+    fun listen(context: Context) {
+        SmsRetriever.getClient(context).startSmsUserConsent(null)
     }
+}
 
-    override fun onStopJob(params: JobParameters): Boolean {
-        holding.remove(params.jobId)?.cancel()
-        return false
-    }
-
-    override fun onDestroy() {
-        scope.cancel()
-        super.onDestroy()
-    }
-
-    companion object {
-        fun hold(context: Context, code: String, sender: String, body: String) {
-            val extras = PersistableBundle().apply {
-                putString("code", code)
-                putString("sender", sender)
-                putString("body", body)
-                putLong("until", System.currentTimeMillis() + WINDOW_SECONDS * 1000L)
-            }
-            val id = (System.nanoTime() and 0x3FFFFFFF).toInt()
-            val job = JobInfo.Builder(id, ComponentName(context, ShareJob::class.java))
-                .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
-                .setExtras(extras)
-                .apply {
-                    // ponytail: expedited jobs start at once and survive battery saving on Android 12+.
-                    // Older phones get an ordinary job, which Doze can delay; use a foreground service
-                    // there if codes go missing.
-                    if (Build.VERSION.SDK_INT >= 31) setExpedited(true) else setOverrideDeadline(0)
-                }
-                .build()
-            context.getSystemService(JobScheduler::class.java).schedule(job)
+/** Only Google Play services can deliver this (see the manifest), so other apps can't fake one. */
+class ConsentReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val extras = intent.extras ?: return
+        val status = BundleCompat.getParcelable(extras, SmsRetriever.EXTRA_STATUS, Status::class.java)
+        if (status?.statusCode == CommonStatusCodes.SUCCESS) {
+            Consent.pending = BundleCompat.getParcelable(extras, SmsRetriever.EXTRA_CONSENT_INTENT, Intent::class.java)
         }
     }
 }

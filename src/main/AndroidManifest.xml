@@ -5,8 +5,6 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Needed to hold a code until the phone is online; grants no access to anything personal. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.RECEIVE_SMS" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- The sharing phone rings and asks before any code is sent. Sharing is off without it. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Lets that request take over the screen like an incoming call, even when the phone is locked. -->
@@ -36,13 +34,22 @@
             </intent-filter>
         </activity>
 
-        <!-- Only the system can deliver this broadcast (BROADCAST_SMS), so other apps can't fake a message. -->
-        <receiver
-            android:name=".SmsReceiver"
-            android:exported="true"
-            android:permission="android.permission.BROADCAST_SMS">
+        <!-- Firebase wakes the sharing phone when the partner asks. -->
+        <service
+            android:name=".PushService"
+            android:exported="false">
             <intent-filter>
-                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!-- "Allow OTP Please to read this message?". Only Google Play services can deliver it. -->
+        <receiver
+            android:name=".ConsentReceiver"
+            android:exported="true"
+            android:permission="com.google.android.gms.auth.api.phone.permission.SEND">
+            <intent-filter>
+                <action android:name="com.google.android.gms.auth.api.phone.SMS_RETRIEVED" />
             </intent-filter>
         </receiver>
 
@@ -56,13 +63,7 @@
             android:taskAffinity=""
             tools:ignore="DiscouragedApi,LockedOrientationActivity" />
 
-        <!-- Send and Don't send on the notification. -->
+        <!-- Don't send, on the notification. -->
         <receiver android:name=".Decision" android:exported="false" />
-
-        <!-- Holds a code for one minute and asks the owner only if the partner asks. -->
-        <service
-            android:name=".ShareJob"
-            android:exported="false"
-            android:permission="android.permission.BIND_JOB_SERVICE" />
     </application>
 </manifest>

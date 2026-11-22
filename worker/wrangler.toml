@@ -1,0 +1,4 @@
+# Deploy: npx wrangler deploy, then npx wrangler secret put FIREBASE_SERVICE_ACCOUNT (see docs/PLAY.md)
+name = "otp-please-wake"
+main = "wake.js"
+compatibility_date = "2025-11-01"

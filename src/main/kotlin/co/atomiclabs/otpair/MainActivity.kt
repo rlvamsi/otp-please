@@ -36,10 +36,11 @@ class MainActivity : ComponentActivity() {
         setContent { OtpairTheme { App(store, resumes) } }
     }
 
-    // Permissions and battery settings change while the user is away in system settings.
+    // Permissions change while the user is away in system settings.
     override fun onResume() {
         super.onResume()
         resumes++
+        Wake.follow(Store(this))
     }
 }
 

@@ -4,7 +4,12 @@ plugins {
     id("com.android.application") version "8.13.2"
     id("org.jetbrains.kotlin.android") version "2.2.21"
     id("org.jetbrains.kotlin.plugin.compose") version "2.2.21"
+    id("com.google.gms.google-services") version "4.6.0" apply false
 }
+
+// The Firebase project that wakes the sharing phone (see docs/PLAY.md). Without its
+// google-services.json the app still builds; Get OTP then can't ring the other phone.
+if (file("google-services.json").exists()) apply(plugin = "com.google.gms.google-services")
 
 android {
     namespace = "co.atomiclabs.otpair"
@@ -12,8 +17,8 @@ android {
     defaultConfig {
         applicationId = "co.atomiclabs.otpair"
         minSdk = 26
-        // Do not raise to 37+: on Android 17, apps targeting API 37 or higher receive
-        // OTP text messages three hours late, which would defeat the whole app.
+        // This build never reads text messages itself (Android's one-message consent pop-up
+        // does), so Android 17's late delivery of OTP texts to SMS-reading apps doesn't apply.
         targetSdk = 36
         versionCode = 1
         versionName = "1.0.0"
@@ -54,5 +59,8 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.activity:activity-compose:1.11.0")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0") // QR: draw and scan
+    implementation("com.google.android.gms:play-services-auth-api-phone:18.3.1") // "Allow OTP Please to read this message?"
+    implementation("com.google.firebase:firebase-messaging:26.0.2") // wakes the sharing phone when asked
+    implementation("androidx.fragment:fragment:1.8.9") // Play services brings 1.0, which breaks activity results
     testImplementation("junit:junit:4.13.2")
 }

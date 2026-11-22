@@ -41,6 +41,14 @@ object Otp {
             ?.value
     }
 
+    private val bare = Regex("""(?<![\w.,/])\d{4,8}(?!\w)""")
+
+    /**
+     * The code in something the owner chose to share: a text they allowed, or what they copied.
+     * Falls back to the first standalone number, since a copied code has no "OTP" next to it.
+     */
+    fun find(text: String): String? = extract(text) ?: bare.find(text)?.value
+
     private fun gap(a: IntRange, b: IntRange) = maxOf(a.first - b.last, b.first - a.last, 0)
 }
 
@@ -112,6 +120,9 @@ class Pairing private constructor(private val keys: KeyPair) {
  */
 class Link(private val secret: ByteArray) {
     val topic = "otpair-" + hmac("topic").take(16).joinToString("") { "%02x".format(it) }
+
+    /** The Firebase topic that wakes the sharing phone. Unrelated to [topic], so ntfy and Google can't connect the two. */
+    val push = "w" + hmac("push").take(16).joinToString("") { "%02x".format(it) }
     private val key = SecretKeySpec(hmac("key"), "AES")
 
     /** Four digits that are the same on both phones only when they hold the same secret. */
@@ -158,7 +169,8 @@ class Link(private val secret: ByteArray) {
 
 /**
  * What travels between the phones, always sealed. [type] is "hello" (pairing), "want" (one
- * phone is asking for a code) or "otp" (the answer to a "want"). [at] is when it was written.
+ * phone is asking for a code), "asking" (the other phone is ringing), "otp" (the code) or "no"
+ * (its owner said no). [at] is when it was written.
  */
 data class Msg(
     val type: String,

@@ -1,6 +1,5 @@
 package co.atomiclabs.otpair
 
-import android.Manifest
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
@@ -9,7 +8,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.PersistableBundle
-import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.Settings
 import android.text.format.DateUtils
@@ -148,8 +146,13 @@ internal fun Home(store: Store, link: Link, resumes: Int, onUnpair: () -> Unit) 
                 }
             }
             try {
-                // Nothing is sent from the other phone until this request reaches it.
-                withContext(Dispatchers.IO) { Relay.publish(link, Msg("want", store.deviceId)) }
+                // Firebase wakes the other phone. ntfy also carries the request, for a partner on
+                // the GitHub build, which reads its texts itself and listens there instead.
+                withContext(Dispatchers.IO) {
+                    val want = Msg("want", store.deviceId)
+                    Relay.publish(link, want)
+                    Relay.wake(link, want)
+                }
                 var dropped = false
                 var misses = 0
                 while (true) {
@@ -164,7 +167,7 @@ internal fun Home(store: Store, link: Link, resumes: Int, onUnpair: () -> Unit) 
                                 Relay.listen(link, "${(began - start) / 1000 + WINDOW_SECONDS}s").collect { msg ->
                                     if (msg.from == store.deviceId) return@collect
                                     when (msg.type) {
-                                        // The code is on the other phone, which is ringing: wait for its owner.
+                                        // The other phone is ringing: wait for its owner.
                                         "asking" -> if (!approving) {
                                             approving = true
                                             total = APPROVE_SECONDS
@@ -310,15 +313,6 @@ internal fun Home(store: Store, link: Link, resumes: Int, onUnpair: () -> Unit) 
             }
             Hairline()
             LockRow(store, resumes)
-            if (sharer && !context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)) {
-                Hairline()
-                SettingRow(Glyph.Bolt, "Keep sharing reliable", "Let OTP Please run in the background, or codes can stop coming through.", onClick = {
-                    @Suppress("BatteryLife") // sideloaded by design; receiving texts in the background is the app's whole job
-                    context.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}")))
-                }) {
-                    Icon(Glyph.Forward, null, Modifier.size(20.dp), look.soft)
-                }
-            }
             Hairline()
             SettingRow(Glyph.Qr, "Pair number", "The same on both phones when they are paired only with each other.") {
                 T(link.check.chunked(2).joinToString(" "), Type.heading)
@@ -361,7 +355,7 @@ private fun Stage(phase: Phase, left: Int, total: Int, codes: List<Msg>, listeni
         T(
             when (phase) {
                 Phase.Idle -> "READY"
-                Phase.Listening -> "LISTENING"
+                Phase.Listening -> "CALLING"
                 Phase.Approving -> "WAITING FOR A YES"
                 Phase.Declined -> "NOT SENT"
                 Phase.Unanswered -> "NO ANSWER"
@@ -393,13 +387,13 @@ private fun Stage(phase: Phase, left: Int, total: Int, codes: List<Msg>, listeni
         AnimatedContent(phase, transitionSpec = { fadeIn(tween(220, delayMillis = 60)) togetherWith fadeOut(tween(100)) }, label = "words") { now ->
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                 val (title, body) = when (now) {
-                    Phase.Idle -> "Need a code?" to "If one reached your partner’s phone in the last minute, or arrives in the next, they’re asked to send it to you."
-                    Phase.Listening -> "Looking for your code" to "When it reaches your partner’s phone, they’re asked to send it."
-                    Phase.Approving -> "Your code is waiting" to "It reached your partner’s phone. It shows up here as soon as they tap Send."
-                    Phase.Declined -> "Your partner didn’t send it" to "They chose not to share this code."
-                    Phase.Unanswered -> "No answer" to "Your partner didn’t tap Send in time. Try again when they can see their phone."
+                    Phase.Idle -> "Need a code?" to "Your partner’s phone rings, and the code shows up here once they send it."
+                    Phase.Listening -> "Calling your partner’s phone" to "This takes a few seconds."
+                    Phase.Approving -> "Your partner’s phone is ringing" to "The code shows up here once they send it. If it’s taking a while, tap Resend OTP where you’re paying."
+                    Phase.Declined -> "Your partner didn’t send it" to "They chose not to share a code."
+                    Phase.Unanswered -> "No code came" to "Your partner didn’t send one in time. Try again when they can see their phone."
                     Phase.Found -> null to newest?.body.orEmpty()
-                    Phase.Missed -> "No code arrived" to "Nothing reached your partner’s phone in that minute. Ask for the OTP to be sent again, then try once more."
+                    Phase.Missed -> "Couldn’t reach your partner" to "Their phone didn’t ring. Check it’s on and online, then try again."
                     Phase.Offline -> "Can’t connect" to "Check your internet, then try again."
                 }
                 if (title != null) {
@@ -560,7 +554,6 @@ private fun Shared(store: Store, resumes: Int, modifier: Modifier) {
     val context = LocalContext.current
     var on by remember(resumes) { mutableStateOf(store.sharing) }
     var asks by remember { mutableIntStateOf(0) } // goes up each time a permission question closes
-    val sms = remember(resumes, asks) { context.allows(Manifest.permission.RECEIVE_SMS) }
     val alerts = remember(resumes, asks) { Alerts.allowed(context) }
     val fullScreen = remember(resumes) { Alerts.fullScreen(context) }
     val last = remember(resumes) { store.lastShared }
@@ -568,7 +561,7 @@ private fun Shared(store: Store, resumes: Int, modifier: Modifier) {
         on = store.sharing
         asks++
     }
-    val working = on && sms && alerts
+    val working = on && alerts
 
     Column(modifier.fillMaxWidth()) {
         Box(Modifier.weight(1f).fillMaxWidth(), Alignment.Center) {
@@ -598,7 +591,7 @@ private fun Shared(store: Store, resumes: Int, modifier: Modifier) {
                 Spacer(Modifier.height(10.dp))
                 T(
                     when {
-                        working -> "When your partner asks for a code, this phone rings. Nothing is sent until you tap Send."
+                        working -> "When your partner asks for a code, this phone rings. Nothing is sent unless you allow it."
                         on -> "Fix the one thing below and it starts again."
                         else -> "Codes that arrive here stay here. Your partner can’t ask for them."
                     },
@@ -612,26 +605,7 @@ private fun Shared(store: Store, resumes: Int, modifier: Modifier) {
                     )
                 }
                 Spacer(Modifier.height(28.dp))
-                if (on && !sms) {
-                    Callout(Glyph.Alert, "Android is blocking message access", "Open settings", { context.openAppSettings() }) {
-                        T("Apps installed outside the Play Store need one extra step.", Type.small, color = look.soft)
-                        Spacer(Modifier.height(14.dp))
-                        listOf(
-                            "Tap Open settings below.",
-                            "Tap ⋮ at the top right, then Allow restricted settings.",
-                            "Open Permissions, then SMS, and choose Allow.",
-                            "Come back here.",
-                        ).forEachIndexed { i, step ->
-                            Row(Modifier.padding(bottom = 10.dp)) {
-                                Box(Modifier.size(22.dp).background(look.bg, CircleShape).border(1.dp, look.border, CircleShape), Alignment.Center) {
-                                    T("${i + 1}", Type.eyebrow.copy(letterSpacing = 0.sp))
-                                }
-                                Spacer(Modifier.width(12.dp))
-                                T(step, Type.small)
-                            }
-                        }
-                    }
-                } else if (on && !alerts) {
+                if (on && !alerts) {
                     Callout(Glyph.Bell, "Notifications are off", "Open settings", {
                         context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
                     }) {

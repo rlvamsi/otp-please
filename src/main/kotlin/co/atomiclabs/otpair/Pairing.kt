@@ -466,7 +466,7 @@ internal fun PairedSetup(store: Store, link: Link, onDone: () -> Unit) {
             Spacer(Modifier.height(16.dp))
             Choice(
                 Glyph.Message, "Yes, they come here",
-                "Share them with your partner. Android will ask to let OTP Please see your messages and notify you.",
+                "Share them with your partner. Android will ask to let OTP Please notify you.",
                 shares == true,
             ) { shares = true }
             Spacer(Modifier.height(12.dp))
@@ -502,9 +502,9 @@ internal fun PairNumber(link: Link) {
     }
 }
 
-/** What Android has to allow before this phone can share: reading texts, and telling its owner. */
+/** What Android has to allow before this phone can share: ringing its owner. Texts are never read without asking. */
 internal val sharePermissions =
-    listOfNotNull(Manifest.permission.RECEIVE_SMS, Manifest.permission.POST_NOTIFICATIONS.takeIf { Build.VERSION.SDK_INT >= 33 })
+    listOfNotNull(Manifest.permission.POST_NOTIFICATIONS.takeIf { Build.VERSION.SDK_INT >= 33 })
 
 /**
  * Turning sharing on goes the same way wherever it starts: a plain warning first, then Android's
@@ -519,6 +519,7 @@ internal fun shareSwitch(store: Store, done: () -> Unit): () -> Unit {
     fun allow() {
         store.sharing = true
         Alerts.prepare(context)
+        Wake.follow(store)
         val missing = sharePermissions.filterNot(context::allows)
         if (missing.isEmpty()) done() else ask.launch(missing.toTypedArray())
     }
@@ -530,7 +531,7 @@ internal fun shareSwitch(store: Store, done: () -> Unit): () -> Unit {
             for ((icon, line) in listOf(
                 Glyph.Message to "Your partner will be able to ask for the codes that banks and other services text to this phone.",
                 Glyph.Alert to "Never turn this on because someone on a call or chat asked you to. Banks, police and support staff never will.",
-                Glyph.Bell to "Nothing is sent on its own. When your partner asks, this phone rings and you tap Send or Don’t send.",
+                Glyph.Bell to "Nothing is sent on its own. When your partner asks, this phone rings, and a code goes only if you allow it.",
             )) {
                 Row(Modifier.padding(bottom = 16.dp)) {
                     Icon(icon, null, Modifier.size(22.dp), look.ink)

@@ -10,3 +10,9 @@ local.properties
 keystore.properties
 # Working notes for coding agents: local paths and personal details, not for the public repo.
 Agent_rules.md
+
+# Firebase: the app config is per fork; a service account key must never be committed.
+google-services.json
+*service-account*.json
+worker/.wrangler/
+worker/node_modules/
