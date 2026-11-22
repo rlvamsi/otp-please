@@ -21,9 +21,9 @@
         android:allowBackup="false"
         android:dataExtractionRules="@xml/no_backup"
         android:icon="@mipmap/ic_launcher"
-        android:label="OTPair"
+        android:label="OTP Please"
         android:supportsRtl="true"
-        android:theme="@style/Theme.OTPair">
+        android:theme="@style/Theme.OtpPlease">
 
         <activity
             android:name=".MainActivity"

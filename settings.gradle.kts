@@ -4,4 +4,4 @@ pluginManagement {
 dependencyResolutionManagement {
     repositories { google(); mavenCentral() }
 }
-rootProject.name = "otpair"
+rootProject.name = "otp-please"

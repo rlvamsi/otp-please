@@ -88,7 +88,7 @@ class Pairing private constructor(private val keys: KeyPair) {
 
         fun new() = Pairing(KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair())
 
-        /** The other phone's public key from scanned QR text. Null for anything that isn't an OTPair code. */
+        /** The other phone's public key from scanned QR text. Null for anything that isn't an OTP Please code. */
         fun scan(text: String): ByteArray? = text.trim().takeIf { it.startsWith(QR) }?.let { key(it.removePrefix(QR)) }
 
         /** A public key as sent in a hello. Null when it isn't one. */
@@ -144,7 +144,7 @@ class Link(private val secret: ByteArray) {
     companion object {
         private const val PREFIX = "otpair1:"
 
-        /** Null for anything that isn't a stored OTPair secret. */
+        /** Null for anything that isn't a stored OTP Please secret. */
         fun decode(text: String): Link? = try {
             text.trim().takeIf { it.startsWith(PREFIX) }
                 ?.let { Base64.getUrlDecoder().decode(it.removePrefix(PREFIX)) }

@@ -1,4 +1,4 @@
-Icon shapes in OTPair are redrawn from Lucide (https://lucide.dev).
+Icon shapes in OTP Please are redrawn from Lucide (https://lucide.dev).
 Upstream licence: https://github.com/lucide-icons/lucide/blob/main/LICENSE
 
 ISC License

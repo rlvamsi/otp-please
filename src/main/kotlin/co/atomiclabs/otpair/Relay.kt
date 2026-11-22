@@ -288,7 +288,7 @@ class Decision : BroadcastReceiver() {
                         if (send) store.lastShared = msg.at to msg.sender
                     }
                 } catch (e: Exception) {
-                    Log.w("OTPair", "answering the request failed: ${e.javaClass.simpleName}")
+                    Log.w("OtpPlease", "answering the request failed: ${e.javaClass.simpleName}")
                 } finally {
                     then()
                 }
@@ -356,7 +356,7 @@ class ShareJob : JobService() {
                             try {
                                 Relay.publish(link, Msg("asking", store.deviceId))
                             } catch (e: IOException) {
-                                Log.w("OTPair", "telling the partner failed: ${e.javaClass.simpleName}")
+                                Log.w("OtpPlease", "telling the partner failed: ${e.javaClass.simpleName}")
                             }
                         }
                         break
@@ -364,7 +364,7 @@ class ShareJob : JobService() {
                         throw e
                     } catch (e: Exception) {
                         // Only the kind of error: its text can carry the relay address of this pair.
-                        Log.w("OTPair", "waiting for the partner to ask: ${e.javaClass.simpleName}")
+                        Log.w("OtpPlease", "waiting for the partner to ask: ${e.javaClass.simpleName}")
                         delay(1500) // offline or the stream dropped: keep waiting out the minute
                     }
                 }

@@ -154,7 +154,7 @@ internal fun Home(store: Store, link: Link, resumes: Int, onUnpair: () -> Unit) 
                 var misses = 0
                 while (true) {
                     // Android cuts an app's internet soon after it leaves the screen (she switched to the
-                    // bank page), so wait here until OTPair is in front again.
+                    // bank page), so wait here until OTP Please is in front again.
                     lifecycle.withResumed { }
                     val began = SystemClock.elapsedRealtime()
                     if (done || began >= end && !dropped) break
@@ -204,7 +204,7 @@ internal fun Home(store: Store, link: Link, resumes: Int, onUnpair: () -> Unit) 
                 throw e
             } catch (e: Exception) {
                 // Only the kind of error: its text can carry the relay address of this pair.
-                Log.w("OTPair", "asking for a code failed: ${e.javaClass.simpleName}")
+                Log.w("OtpPlease", "asking for a code failed: ${e.javaClass.simpleName}")
                 offline = true
             } finally {
                 clock.cancel()
@@ -253,7 +253,7 @@ internal fun Home(store: Store, link: Link, resumes: Int, onUnpair: () -> Unit) 
         Row(Modifier.fillMaxWidth().height(64.dp).padding(start = 24.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Logo(30.dp)
             Spacer(Modifier.width(10.dp))
-            T("OTPair", Type.heading)
+            T("OTP Please", Type.heading)
             Spacer(Modifier.weight(1f))
             CircleButton(Glyph.Settings, "Settings") { settings = true }
         }
@@ -312,7 +312,7 @@ internal fun Home(store: Store, link: Link, resumes: Int, onUnpair: () -> Unit) 
             LockRow(store, resumes)
             if (sharer && !context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)) {
                 Hairline()
-                SettingRow(Glyph.Bolt, "Keep sharing reliable", "Let OTPair run in the background, or codes can stop coming through.", onClick = {
+                SettingRow(Glyph.Bolt, "Keep sharing reliable", "Let OTP Please run in the background, or codes can stop coming through.", onClick = {
                     @Suppress("BatteryLife") // sideloaded by design; receiving texts in the background is the app's whole job
                     context.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}")))
                 }) {
@@ -498,7 +498,7 @@ private fun Countdown(left: Int, total: Int) {
     }
 }
 
-private const val CLIP = "OTPair code"
+private const val CLIP = "OTP Please code"
 
 /** Takes the code off the clipboard, unless something else has been copied since. */
 private fun forgetCode(context: Context) {

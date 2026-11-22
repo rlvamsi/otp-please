@@ -169,7 +169,7 @@ internal fun ShowCode(store: Store, onPaired: (Link) -> Unit, onBack: () -> Unit
         Spacer(Modifier.height(12.dp))
         T("Scan this from your partner’s phone", Type.title)
         Spacer(Modifier.height(10.dp))
-        T("Open OTPair there and tap Scan partner’s code.", Type.body, color = look.soft)
+        T("Open OTP Please there and tap Scan partner’s code.", Type.body, color = look.soft)
         Spacer(Modifier.height(28.dp))
 
         val card = RoundedCornerShape(32.dp)
@@ -294,7 +294,7 @@ internal fun Scanner(store: Store, resumes: Int, onPaired: (Link) -> Unit, onBac
         if (busy) return
         val theirs = Pairing.scan(text)
         if (theirs == null) {
-            hint = "That isn’t an OTPair code. Scan the one inside OTPair on the other phone."
+            hint = "That isn’t an OTP Please code. Scan the one inside OTP Please on the other phone."
             return
         }
         busy = true
@@ -313,7 +313,7 @@ internal fun Scanner(store: Store, resumes: Int, onPaired: (Link) -> Unit, onBac
             when {
                 answered -> onPaired(link!!)
                 sent -> hint = "That code didn’t pair. Ask your partner to go back and show a new one."
-                link == null -> hint = "That isn’t an OTPair code. Scan the one inside OTPair on the other phone."
+                link == null -> hint = "That isn’t an OTP Please code. Scan the one inside OTP Please on the other phone."
                 else -> hint = "Couldn’t connect. Check your internet and scan again."
             }
             busy = false
@@ -338,7 +338,7 @@ internal fun Scanner(store: Store, resumes: Int, onPaired: (Link) -> Unit, onBac
             Spacer(Modifier.weight(0.5f))
             T("Scan your partner’s code", Type.title, color = Color.White, align = TextAlign.Center)
             Spacer(Modifier.height(8.dp))
-            T("Ask them to open OTPair and tap Show my code.", Type.body, color = Color(0xCCFFFFFF), align = TextAlign.Center)
+            T("Ask them to open OTP Please and tap Show my code.", Type.body, color = Color(0xCCFFFFFF), align = TextAlign.Center)
             Spacer(Modifier.height(32.dp))
 
             Box(
@@ -362,7 +362,7 @@ internal fun Scanner(store: Store, resumes: Int, onPaired: (Link) -> Unit, onBac
                     !granted -> Column(Modifier.padding(horizontal = 28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Glyph.Camera, null, Modifier.size(32.dp), Color.White)
                         Spacer(Modifier.height(16.dp))
-                        T("The camera is off for OTPair", Type.bodyStrong, color = Color.White, align = TextAlign.Center)
+                        T("The camera is off for OTP Please", Type.bodyStrong, color = Color.White, align = TextAlign.Center)
                         Spacer(Modifier.height(4.dp))
                         T("Allow it in settings to scan the code.", Type.small, color = Color(0xB3FFFFFF), align = TextAlign.Center)
                         Spacer(Modifier.height(20.dp))
@@ -466,7 +466,7 @@ internal fun PairedSetup(store: Store, link: Link, onDone: () -> Unit) {
             Spacer(Modifier.height(16.dp))
             Choice(
                 Glyph.Message, "Yes, they come here",
-                "Share them with your partner. Android will ask to let OTPair see your messages and notify you.",
+                "Share them with your partner. Android will ask to let OTP Please see your messages and notify you.",
                 shares == true,
             ) { shares = true }
             Spacer(Modifier.height(12.dp))

@@ -1,6 +1,6 @@
-# OTPair
+# OTP Please
 
-**Never wait for an OTP again.** OTPair pairs two Android phones so that either person can get the other's one-time codes with one tap.
+**Never wait for an OTP again.** OTP Please pairs two Android phones so that either person can get the other's one-time codes with one tap.
 
 It is built for couples and families who share cards: the card is in one person's name, the OTP lands on that person's phone, and the other person is stuck at checkout waiting for it.
 
@@ -22,7 +22,7 @@ Once paired, each phone shows only its job: the sharing phone says **Sharing is 
 
 **A code leaves the phone only when your partner asks for it and you say yes.** Under the hood:
 
-- When a text message arrives, Android wakes OTPair. If the message looks like an OTP, the app holds the code on the phone for one minute and watches for a request from the paired phone. Messages that are not OTPs are ignored.
+- When a text message arrives, Android wakes OTP Please. If the message looks like an OTP, the app holds the code on the phone for one minute and watches for a request from the paired phone. Messages that are not OTPs are ignored.
 - Tapping **Get OTP** sends that request. If nobody asks within the minute, the code is forgotten and nothing is sent, and the sharing phone stays silent.
 - When the request and a code meet, the sharing phone rings like an incoming call: "Your partner is asking for a code", with the message text so you can check the amount and the shop. If the screen is off or locked, a full-screen **Send this code?** page takes over the display. It keeps ringing until you answer, for up to three minutes.
 - Only after **Send** does the phone encrypt the code (AES-256-GCM) and send it. Send needs the phone unlocked. **Don’t send** tells the other phone "not sent" and nothing else.
@@ -33,13 +33,13 @@ There is no account, no server to run, and no analytics.
 
 ## Install
 
-OTPair is not on the Play Store. Google allows apps to read text messages only by special exception, so you build it and install the APK yourself, on both phones.
+OTP Please is not on the Play Store. Google allows apps to read text messages only by special exception, so you build it and install the APK yourself, on both phones.
 
 ```bash
 ./gradlew assembleRelease
 ```
 
-The APK is written to `build/outputs/apk/release/otpair-release.apk`. Building needs JDK 17 or 21 and the Android SDK (platform 36).
+The APK is written to `build/outputs/apk/release/otp-please-release.apk`. Building needs JDK 17 or 21 and the Android SDK (platform 36).
 
 On the phone that will **share** its codes, allow notifications when the app asks. If the app says so, also let it show full-screen notifications, so a request can take over the screen like a call. Android also adds one hurdle for apps installed outside the Play Store. If the SMS permission is refused, the app walks you through it:
 
@@ -47,7 +47,7 @@ On the phone that will **share** its codes, allow notifications when the app ask
 2. Tap **⋮** at the top right, then **Allow restricted settings**.
 3. Open **Permissions → SMS → Allow**.
 
-Also let the app run in the background when it asks. On Xiaomi, Vivo, iQOO, Oppo, OnePlus and some Samsung phones, additionally enable **Autostart** (or set battery use to **Unrestricted**) for OTPair, or the phone may stop it from waking up.
+Also let the app run in the background when it asks. On Xiaomi, Vivo, iQOO, Oppo, OnePlus and some Samsung phones, additionally enable **Autostart** (or set battery use to **Unrestricted**) for OTP Please, or the phone may stop it from waking up.
 
 ## Security, honestly
 
@@ -58,22 +58,22 @@ Also let the app run in the background when it asks. On Xiaomi, Vivo, iQOO, Oppo
 - **Get OTP is locked.** By default it asks for a fingerprint, face or the phone's PIN (Android 9 or newer, on a phone with a screen lock), so someone who picks up the unlocked phone cannot pull a code. You can turn this off in Settings.
 - **Only codes that were asked for ever reach the relay.** They stay there encrypted for about 12 hours, then expire. Old messages played back are ignored: every message carries the time it was written and is refused after three minutes.
 - **The secret is encrypted on the phone** with a key held in the Android Keystore, and is excluded from cloud backups and phone-to-phone transfers. A rooted or compromised phone could still use it.
-- **A copied code is cleared from the clipboard after a minute**, if OTPair is still open.
+- **A copied code is cleared from the clipboard after a minute**, if OTP Please is still open.
 - **Your partner sees the full text of each OTP message**, not just the code, so they can check the amount and merchant.
 - **Your partner can ask for any OTP, from any sender**, but each one still needs your Send.
-- Banks tell you never to share OTPs. OTPair is for people who have already decided to share a card with one person they trust completely. Do not pair with anyone else, and never install it on someone's phone without their knowledge.
+- Banks tell you never to share OTPs. OTP Please is for people who have already decided to share a card with one person they trust completely. Do not pair with anyone else, and never install it on someone's phone without their knowledge.
 
 ## Limits
 
 - **The sharing phone has to be with someone.** If nobody taps Send within three minutes, no code is sent. Do Not Disturb can silence the ringing.
-- **Keep OTPair open while you wait.** Android cuts an app's internet shortly after it leaves the screen. If you switch to the bank page and come back, OTPair picks the code up as soon as it is in front again.
+- **Keep OTP Please open while you wait.** Android cuts an app's internet shortly after it leaves the screen. If you switch to the bank page and come back, OTP Please picks the code up as soon as it is in front again.
 - **Both phones need roughly the right time.** Messages more than three minutes off are refused. Phones set to automatic time are fine.
 - **The sharing phone needs Android 12 or newer to be dependable.** Older versions can delay the one-minute watch when the phone is dozing.
 - **Text messages only.** Codes sent over RCS chat, WhatsApp or email are not picked up.
 - **The relay is someone else's free service.** If ntfy.sh is down, sharing pauses. To use your own ntfy server, change `BASE` in [`Relay.kt`](src/main/kotlin/co/atomiclabs/otpair/Relay.kt).
 - **OTP detection is a heuristic** tuned on Indian bank messages (a keyword such as "OTP" or "code", plus the nearest 4 to 8 digit number). Unusual formats may be missed; add a case to [`CoreTest.kt`](src/test/kotlin/co/atomiclabs/otpair/CoreTest.kt) and adjust `Otp` in [`Core.kt`](src/main/kotlin/co/atomiclabs/otpair/Core.kt).
 - **Do not raise `targetSdk` above 36.** On Android 17, apps that target API 37 or higher receive OTP messages three hours late.
-- Android's permission prompt says "send and view SMS messages". OTPair only asks for the receive permission and cannot send texts; the wording is Android's label for the whole SMS group.
+- Android's permission prompt says "send and view SMS messages". OTP Please only asks for the receive permission and cannot send texts; the wording is Android's label for the whole SMS group.
 
 ## Publishing a build
 

@@ -95,7 +95,7 @@ internal fun Onboarding(skipIntro: Boolean, onShow: () -> Unit, onScan: () -> Un
         Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
             Logo(30.dp)
             Spacer(Modifier.width(10.dp))
-            T("OTPair", Type.heading)
+            T("OTP Please", Type.heading)
             Spacer(Modifier.weight(1f))
             Dots(pager.currentPage)
         }
